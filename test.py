@@ -1,15 +1,6 @@
-import os
 import cv2
-import pickle
 from deepface import DeepFace
 from picamera2 import Picamera2
-
-# Load KNN Model and Names
-with open("data/knn_model.pkl", "rb") as f:
-    knn_model = pickle.load(f)
-
-with open("data/names.pkl", "rb") as f:
-    known_names = pickle.load(f)
 
 # Initialize Raspberry Pi Camera
 camera = Picamera2()
@@ -19,20 +10,16 @@ camera.start()
 # Initialize face detection
 facedetect = cv2.CascadeClassifier('data/haarcascade_frontalface_default.xml')
 
-def predict_knn(embedding):
-    """
-    Predict using KNN model.
-    """
-    return knn_model.predict([embedding])[0]
-
 def recognize_face(image):
     """
-    Recognize face using DeepFace or KNN.
+    Recognize face using DeepFace.
     """
     try:
-        embedding = DeepFace.represent(image, model_name="Facenet")[0]["embedding"]
-        name = predict_knn(embedding)
-        return name
+        result = DeepFace.find(img_path=image, db_path="dataset", model_name="Facenet")
+        if len(result) > 0:
+            return result[0]['identity'].split('/')[-2]  # Extract person's name from file path
+        else:
+            return "Unknown"
     except Exception as e:
         print(f"Recognition error: {e}")
         return "Unknown"

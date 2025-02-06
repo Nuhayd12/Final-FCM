@@ -2,16 +2,9 @@ from flask import Flask, Response
 import cv2
 from picamera2 import Picamera2
 from deepface import DeepFace
-import pickle
+import numpy as np
 
 app = Flask(__name__)
-
-# Load KNN Model and Names for face recognition
-with open("data/knn_model.pkl", "rb") as f:
-    knn_model = pickle.load(f)
-
-with open("data/names.pkl", "rb") as f:
-    known_names = pickle.load(f)
 
 # Initialize Raspberry Pi Camera (Picamera2)
 camera = Picamera2()
@@ -21,49 +14,48 @@ camera.start()
 # Initialize face detection
 facedetect = cv2.CascadeClassifier('data/haarcascade_frontalface_default.xml')
 
-def predict_knn(embedding):
-    """
-    Predict using KNN model.
-    """
-    return knn_model.predict([embedding])[0]
-
 def recognize_face(image):
     """
-    Recognize face using DeepFace or KNN.
+    Recognize face using DeepFace.
     """
     try:
-        embedding = DeepFace.represent(image, model_name="Facenet")[0]["embedding"]
-        name = predict_knn(embedding)
-        return name
+        result = DeepFace.find(img_path=image, db_path="dataset", model_name="Facenet")
+        if len(result) > 0:
+            return result[0]['identity'].split('/')[-2]  # Extract person's name from file path
+        else:
+            return "Unknown"
     except Exception as e:
         print(f"Recognition error: {e}")
         return "Unknown"
 
 def gen_frames():
     while True:
-        # Capture frame from Raspberry Pi camera
-        frame = camera.capture_array()
-        
-        # Convert to grayscale for face detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = facedetect.detectMultiScale(gray, 1.3, 5)
+        try:
+            frame = camera.capture_array()
 
-        # For each face detected, try to recognize it
-        for (x, y, w, h) in faces:
-            face_img = frame[y:y+h, x:x+w]
-            name = recognize_face(face_img)
+            if frame.dtype != np.uint8:
+                frame = frame.astype(np.uint8)
 
-            # Display the recognized name on the frame
-            cv2.putText(frame, f"Hi, {name}!", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = facedetect.detectMultiScale(gray, 1.3, 5)
 
-        # Encode the frame to JPEG format
-        _, buffer = cv2.imencode('.jpg', frame)
-        frame = buffer.tobytes()
+            for (x, y, w, h) in faces:
+                face_img = frame[y:y+h, x:x+w]
+                name = recognize_face(face_img)
 
-        # Yield the frame to Flask as a multipart response
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                cv2.putText(frame, f"Hi, {name}!", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+
+            success, buffer = cv2.imencode('.jpg', frame)
+            if not success:
+                continue
+
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            continue
 
 @app.route('/video_feed')
 def video_feed():
